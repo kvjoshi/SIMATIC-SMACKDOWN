@@ -19,5 +19,11 @@ clean: ## Clean up build artifacts
 	$(GO) clean
 	rm ./build/$(BINARY_NAME)
 
-run: build ## Run SIMATIC-SMACKDOWN
+run: build ## Run SIMATIC-SMACKDOWN (network scan mode)
 	./build/$(BINARY_NAME)
+
+run-targets: build ## Run with specific target IPs (example)
+	./build/$(BINARY_NAME) 192.168.1.50 192.168.1.51 192.168.1.52
+
+test-single: build ## Test with a single target IP
+	./build/$(BINARY_NAME) 192.168.1.50
