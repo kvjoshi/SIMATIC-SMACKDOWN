@@ -19,5 +19,5 @@ clean: ## Clean up build artifacts
 	$(GO) clean
 	rm ./build/$(BINARY_NAME)
 
-run: build ## Run Terramaid
+run: build ## Run SIMATIC-SMACKDOWN
 	./build/$(BINARY_NAME)

